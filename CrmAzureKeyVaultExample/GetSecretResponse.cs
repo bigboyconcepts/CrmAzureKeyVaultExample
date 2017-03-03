@@ -3,10 +3,28 @@
 namespace CrmAzureKeyVaultExample
 {
     [DataContract]
-    public class VaultResponse
+    public class GetSecretResponse
     {
         [DataMember]
         public string value { get; set; }
+        [DataMember]
+        public string id { get; set; }
+        [DataMember]
+        public Attributes attributes { get; set; }
+    }
+
+    [DataContract]
+    public class GetSecretVersionsResponse
+    {
+        [DataMember]
+        public Value[] value { get; set; }
+        [DataMember]
+        public string nextLink { get; set; }
+    }
+
+    [DataContract]
+    public class Value
+    {
         [DataMember]
         public string id { get; set; }
         [DataMember]

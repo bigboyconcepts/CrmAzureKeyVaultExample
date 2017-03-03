@@ -77,7 +77,7 @@
     </Compile>
     <Compile Include="RetrieveAzureSecret.cs" />
     <Compile Include="TokenResponse.cs" />
-    <Compile Include="VaultResponse.cs" />
+    <Compile Include="GetSecretResponse.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="LatKey.snk" />

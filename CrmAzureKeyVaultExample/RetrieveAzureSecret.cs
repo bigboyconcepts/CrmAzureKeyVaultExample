@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Runtime.Serialization.Json;
@@ -13,54 +14,54 @@ namespace CrmAzureKeyVaultExample
     {
         public void Execute(IServiceProvider serviceProvider)
         {
-            IPluginExecutionContext context =
-                (IPluginExecutionContext)serviceProvider.GetService(typeof(IPluginExecutionContext));
-
-            //Assume these values came from secure configuration
             string clientId = "00000000-0000-0000-0000-000000000000";
             string clientSecret = "00000000000000000000000000000000000000000000";
             string tenantId = "00000000-0000-0000-0000-000000000000";
-            //Name your secret so it contains your CRM Org.Name and then do a replace, this way
-            //you can mange values from Azure and not change code or configuration in CRM
-            string secretUrl =
-                "https://vaultname.vault.azure.net/secrets/**orgname**SecretName/00000000000000000000000000000000";
-            secretUrl = secretUrl.Replace("**orgname**", context.OrganizationName);
 
+            string secretUrl = "https://myvaulttest.vault.azure.net/secrets/MyPassword/00000000000000000000000000000000";
+
+            //Retrieve the access token required for authentication
             var getTokenTask = Task.Run(async () => await GetToken(clientId, clientSecret, tenantId));
             Task.WaitAll(getTokenTask);
-
             if (getTokenTask.Result == null)
-                throw new InvalidPluginExecutionException("Error retriving access token");
-
-            //Deserial the token response to get the access token
+                throw new InvalidPluginExecutionException("Error retrieving access token");
+            //Deserialize the token response to get the access token
             TokenResponse tokenResponse = DeserializeResponse<TokenResponse>(getTokenTask.Result);
             string token = tokenResponse.access_token;
-            var getKeyTask = Task.Run(async () => await GetSecret(token, secretUrl));
-            Task.WaitAll(getKeyTask);
 
-            if (getKeyTask.Result == null)
-                throw new InvalidPluginExecutionException("Error retriving secret from key vault");
 
+            //Retrieve a secret by its url
+            var getKeyByUrlTask1 = Task.Run(async () => await GetSecretByUrl(token, secretUrl));
+            Task.WaitAll(getKeyByUrlTask1);
+            if (getKeyByUrlTask1.Result == null)
+                throw new InvalidPluginExecutionException("Error retrieving secret value from key vault");
             //Deserialize the vault response to get the secret
-            VaultResponse vaultResponse = DeserializeResponse<VaultResponse>(getKeyTask.Result);
+            GetSecretResponse getSecretResponse1 = DeserializeResponse<GetSecretResponse>(getKeyByUrlTask1.Result);
             //returnedValue is the Azure Key Vault Secret
-            string returnedValue = vaultResponse.value;
+            string returnedValue = getSecretResponse1.value;
+
+
+            string vaultName = "https://myvaulttest.vault.azure.net";
+            string secretName = "MyPassword";
+
+            //Retrieve the latest version of a secret by name
+            var getKeyByNameTask = Task.Run(async () => await GetSecretByName(token, vaultName, secretName));
+            Task.WaitAll(getKeyByNameTask);
+            if (getKeyByNameTask.Result == null)
+                throw new InvalidPluginExecutionException("Error retrieving secret versions from key vault");
+            var retrievedSecretUrl = getKeyByNameTask.Result;
+            // Retrieve a secret by its url
+            var getKeyByUrlTask2 = Task.Run(async () => await GetSecretByUrl(token, retrievedSecretUrl));
+            Task.WaitAll(getKeyByUrlTask2);
+            if (getKeyByUrlTask2.Result == null)
+                throw new InvalidPluginExecutionException("Error retrieving secret value from key vault");
+            //Deserialize the vault response to get the secret
+            GetSecretResponse getSecretResponse2 = DeserializeResponse<GetSecretResponse>(getKeyByUrlTask2.Result);
+            //returnedValue is the Azure Key Vault Secret
+            string returnedValue2 = getSecretResponse2.value;
         }
 
-        private T DeserializeResponse<T>(string response)
-        {
-            using (MemoryStream stream = new MemoryStream())
-            {
-                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
-                StreamWriter writer = new StreamWriter(stream);
-                writer.Write(response);
-                writer.Flush();
-                stream.Position = 0;
-                T responseObject = (T)serializer.ReadObject(stream);
-                return responseObject;
-            }
-        }
-
+        //Get the access token required to access the Key Vault
         private async Task<string> GetToken(string clientId, string clientSecret, string tenantId)
         {
             using (HttpClient httpClient = new HttpClient())
@@ -81,7 +82,8 @@ namespace CrmAzureKeyVaultExample
             }
         }
 
-        private async Task<string> GetSecret(string token, string secretUrl)
+        //Get the Secret value from the Key Vault by url - api-version is required
+        private async Task<string> GetSecretByUrl(string token, string secretUrl)
         {
             using (HttpClient httpClient = new HttpClient())
             {
@@ -94,6 +96,61 @@ namespace CrmAzureKeyVaultExample
                 return !response.IsSuccessStatusCode ? null
                     : response.Content.ReadAsStringAsync().Result;
             }
+        }
+
+        //Get the most recent, enabled Secret value by name  - api-version is required
+        private async Task<string> GetSecretByName(string token, string vaultName, string secretName)
+        {
+            string nextLink = vaultName + "/secrets/" + secretName + "/versions?api-version=2016-10-01";
+            List<Value> values = new List<Value>();
+
+            using (HttpClient httpClient = new HttpClient())
+            {
+                while (!string.IsNullOrEmpty(nextLink))
+                {
+                    HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get,
+                        new Uri(nextLink));
+                    request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+
+                    HttpResponseMessage response = await httpClient.SendAsync(request);
+
+                    if (!response.IsSuccessStatusCode)
+                        return null;
+
+                    var versions = DeserializeResponse<GetSecretVersionsResponse>(response.Content.ReadAsStringAsync().Result);
+                    values.AddRange(versions.value);
+                    nextLink = versions.nextLink;
+                }
+            }
+
+            Value mostRecentValue =
+                values.Where(a => a.attributes.enabled)
+                    .OrderByDescending(a => UnixTimeToUtc(a.attributes.created))
+                    .FirstOrDefault();
+
+            return mostRecentValue?.id;
+        }
+
+        //Generic JSON to object deserialization 
+        private T DeserializeResponse<T>(string response)
+        {
+            using (MemoryStream stream = new MemoryStream())
+            {
+                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
+                StreamWriter writer = new StreamWriter(stream);
+                writer.Write(response);
+                writer.Flush();
+                stream.Position = 0;
+                T responseObject = (T)serializer.ReadObject(stream);
+                return responseObject;
+            }
+        }
+
+        private DateTime UnixTimeToUtc(double unixTime)
+        {
+            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            var timeSpan = TimeSpan.FromSeconds(unixTime);
+            return epoch.Add(timeSpan).ToUniversalTime();
         }
     }
 }
