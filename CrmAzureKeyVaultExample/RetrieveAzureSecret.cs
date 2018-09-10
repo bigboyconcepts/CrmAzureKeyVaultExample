@@ -26,7 +26,7 @@ namespace CrmAzureKeyVaultExample
             if (getTokenTask.Result == null)
                 throw new InvalidPluginExecutionException("Error retrieving access token");
             //Deserialize the token response to get the access token
-            TokenResponse tokenResponse = DeserializeResponse<TokenResponse>(getTokenTask.Result);
+            TokenResponse tokenResponse = DeserializeObject<TokenResponse>(getTokenTask.Result);
             string token = tokenResponse.access_token;
 
 
@@ -36,7 +36,7 @@ namespace CrmAzureKeyVaultExample
             if (getKeyByUrlTask1.Result == null)
                 throw new InvalidPluginExecutionException("Error retrieving secret value from key vault");
             //Deserialize the vault response to get the secret
-            GetSecretResponse getSecretResponse1 = DeserializeResponse<GetSecretResponse>(getKeyByUrlTask1.Result);
+            GetSecretResponse getSecretResponse1 = DeserializeObject<GetSecretResponse>(getKeyByUrlTask1.Result);
             //returnedValue is the Azure Key Vault Secret
             string returnedValue = getSecretResponse1.value;
 
@@ -56,9 +56,17 @@ namespace CrmAzureKeyVaultExample
             if (getKeyByUrlTask2.Result == null)
                 throw new InvalidPluginExecutionException("Error retrieving secret value from key vault");
             //Deserialize the vault response to get the secret
-            GetSecretResponse getSecretResponse2 = DeserializeResponse<GetSecretResponse>(getKeyByUrlTask2.Result);
+            GetSecretResponse getSecretResponse2 = DeserializeObject<GetSecretResponse>(getKeyByUrlTask2.Result);
             //returnedValue is the Azure Key Vault Secret
             string returnedValue2 = getSecretResponse2.value;
+
+            //Create a new secret or update if it exists
+            string newSecretName = "Test123";
+            string newSecretValue = "catdog9876";
+            string newSecretUrl = $"{vaultName}/secrets/{newSecretName}";
+            var createSecretTask = Task.Run(async () => await CreateSecret(token, newSecretUrl, newSecretValue));
+            Task.WaitAll(createSecretTask);
+            Secret secret = DeserializeObject<Secret>(createSecretTask.Result);
         }
 
         //Get the access token required to access the Key Vault
@@ -76,6 +84,36 @@ namespace CrmAzureKeyVaultExample
 
                 HttpResponseMessage response = await httpClient.PostAsync(
                     "https://login.windows.net/" + tenantId + "/oauth2/token", formContent);
+
+                return !response.IsSuccessStatusCode ? null
+                    : response.Content.ReadAsStringAsync().Result;
+            }
+        }
+
+        //Will create a new secret or update an existing one
+        private static async Task<string> CreateSecret(string token, string secretUrl, string secretValue)
+        {
+            using (HttpClient httpClient = new HttpClient())
+            {
+                HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Put,
+                    new Uri(secretUrl + "?api-version=2016-10-01"));
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                Secret setSecretRequest = new Secret
+                {
+                    Value = secretValue,
+                    SecretAttributes = new SecretAttributes
+                    {
+                        Enabled = true
+                    }
+                };
+
+                string content = SerializeObject<Secret>(setSecretRequest);
+                HttpContent c = new StringContent(content);
+                request.Content = c;
+                c.Headers.ContentType = MediaTypeHeaderValue.Parse("application/json");
+
+
+                HttpResponseMessage response = await httpClient.SendAsync(request);
 
                 return !response.IsSuccessStatusCode ? null
                     : response.Content.ReadAsStringAsync().Result;
@@ -117,7 +155,7 @@ namespace CrmAzureKeyVaultExample
                     if (!response.IsSuccessStatusCode)
                         return null;
 
-                    var versions = DeserializeResponse<GetSecretVersionsResponse>(response.Content.ReadAsStringAsync().Result);
+                    var versions = DeserializeObject<GetSecretVersionsResponse>(response.Content.ReadAsStringAsync().Result);
                     values.AddRange(versions.value);
                     nextLink = versions.nextLink;
                 }
@@ -132,17 +170,33 @@ namespace CrmAzureKeyVaultExample
         }
 
         //Generic JSON to object deserialization 
-        private T DeserializeResponse<T>(string response)
+        public static T DeserializeObject<T>(string json)
         {
             using (MemoryStream stream = new MemoryStream())
             {
                 DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
                 StreamWriter writer = new StreamWriter(stream);
-                writer.Write(response);
+                writer.Write(json);
                 writer.Flush();
                 stream.Position = 0;
-                T responseObject = (T)serializer.ReadObject(stream);
-                return responseObject;
+                T o = (T)serializer.ReadObject(stream);
+
+                return o;
+            }
+        }
+
+        //Generic object JSON serialization 
+        public static string SerializeObject<T>(object o)
+        {
+            using (MemoryStream stream = new MemoryStream())
+            {
+                DataContractJsonSerializer serializer = new DataContractJsonSerializer(typeof(T));
+                serializer.WriteObject(stream, o);
+                stream.Position = 0;
+                StreamReader reader = new StreamReader(stream);
+                string json = reader.ReadToEnd();
+
+                return json;
             }
         }
 

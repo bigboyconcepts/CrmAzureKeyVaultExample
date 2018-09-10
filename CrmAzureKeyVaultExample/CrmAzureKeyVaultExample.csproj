@@ -76,6 +76,7 @@
       <DependentUpon>Settings.settings</DependentUpon>
     </Compile>
     <Compile Include="RetrieveAzureSecret.cs" />
+    <Compile Include="Secret.cs" />
     <Compile Include="TokenResponse.cs" />
     <Compile Include="GetSecretResponse.cs" />
   </ItemGroup>
