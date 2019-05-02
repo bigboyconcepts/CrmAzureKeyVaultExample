@@ -18,7 +18,7 @@ namespace CrmAzureKeyVaultExample
             string clientSecret = "00000000000000000000000000000000000000000000";
             string tenantId = "00000000-0000-0000-0000-000000000000";
 
-            string secretUrl = "https://myvaulttest.vault.azure.net/secrets/MyPassword/00000000000000000000000000000000";
+            string secretUrl = "https://dynamics365.vault.azure.net/secrets/ClientSecret/"+clientId;
 
             //Retrieve the access token required for authentication
             var getTokenTask = Task.Run(async () => await GetToken(clientId, clientSecret, tenantId));
@@ -41,8 +41,8 @@ namespace CrmAzureKeyVaultExample
             string returnedValue = getSecretResponse1.value;
 
 
-            string vaultName = "https://myvaulttest.vault.azure.net";
-            string secretName = "MyPassword";
+            string vaultName = "https://dynamics365.vault.azure.net/";
+            string secretName = "ClientSecret";
 
             //Retrieve the latest version of a secret by name
             var getKeyByNameTask = Task.Run(async () => await GetSecretByName(token, vaultName, secretName));
